@@ -12,3 +12,4 @@ data/private/
 .DS_Store
 .vscode/
 .env
+*.egg-info/
