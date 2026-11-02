@@ -45,10 +45,6 @@ class Invoice(BaseModel):
     gross_mass_total: Decimal = Field(ge=0)
     items: list[InvoiceItem]
 
-class Invoice(BaseModel):
-    ...
-    items: list[InvoiceItem]
-
 
 # ---------- Knowledge base: master data maintained by the user ----------
 
