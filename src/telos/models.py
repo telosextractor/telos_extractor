@@ -43,6 +43,28 @@ class Invoice(BaseModel):
     gross_mass_total: Decimal = Field(ge=0)
     items: list[InvoiceItem]
 
+class Invoice(BaseModel):
+    ...
+    items: list[InvoiceItem]
+
+
+# ---------- Knowledge base: master data maintained by the user ----------
+
+class MasterDataEntry(BaseModel):
+    """One row of the master data: an article, or one variant of a split article."""
+    article_number: str
+    trade_unit_gtin: str | None = None
+    description: str
+    variant: str | None = None          # None = article is not split
+    tariff_number: str = Field(pattern=r"^\d{4}\.\d{4}$")
+    net_mass_per_unit: Decimal = Field(ge=0)
+    gross_mass_per_unit: Decimal = Field(ge=0)
+
+
+# ---------- Layer B: what customs clearance needs ----------
+
+class CustomsPosition(BaseModel):
+    ...
 
 # ---------- Layer B: what customs clearance needs ----------
 
