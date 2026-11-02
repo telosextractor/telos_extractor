@@ -1,8 +1,10 @@
 """Data model of telos.
 
 Layer A: what is written on the document (output of the extraction / LLM).
+Knowledge base: master data maintained by the user (input of the rule engine).
 Layer B: what customs clearance needs (output of the rule engine).
 """
+
 from datetime import date
 from decimal import Decimal
 
@@ -60,11 +62,6 @@ class MasterDataEntry(BaseModel):
     net_mass_per_unit: Decimal = Field(ge=0)
     gross_mass_per_unit: Decimal = Field(ge=0)
 
-
-# ---------- Layer B: what customs clearance needs ----------
-
-class CustomsPosition(BaseModel):
-    ...
 
 # ---------- Layer B: what customs clearance needs ----------
 
