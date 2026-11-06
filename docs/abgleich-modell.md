@@ -8,44 +8,75 @@ Verzollung: Das ML **liest**, die Regeln **entscheiden**.
 > Wareneingangsmeldung. Fehlt dieses Dokument, wird die Mengenprüfung
 > gegen die Lieferung übersprungen und als Warnung gemeldet.
 
+## Grundregel
+
+**Alles, was auf der Rechnung steht, muss bestellt worden sein.**
+Umgekehrt gilt das nicht: Nicht alles, was bestellt wurde, muss auf dieser
+Rechnung stehen.
+
+| Fall | Beispiel | Bewertung |
+|---|---|---|
+| Vollständige Lieferung | Bestellt 10 A, 5 B – verrechnet 10 A, 5 B | ok |
+| Artikel fehlt | Bestellt 10 A, 5 B – verrechnet nur 10 A (B nicht geliefert) | Hinweis, B bleibt offen |
+| Teilmenge | Bestellt 10 A – geliefert und verrechnet 6 A | Hinweis, 4 A bleiben offen |
+| Sammelrechnung | Rechnung enthält Bestellung 1 **und** Artikel aus Bestellung 2 | ok, wenn jede Position einer Bestellung zugeordnet werden kann |
+| Nicht bestellt | Rechnung enthält Artikel C, der in keiner Bestellung vorkommt | **Fehler** |
+| Zu viel verrechnet | Bestellt 10 A – verrechnet 12 A | **Fehler** |
+
+**Fehler** blockieren die Freigabe und führen zur manuellen Prüfung.
+**Hinweise** werden angezeigt, blockieren aber nicht.
+
 ## Gesamtablauf
 
 ```mermaid
 flowchart TD
-    A1[Bestellung] --> B
-    A2[Auftragsbestätigung] --> B
     A3[Rechnung] --> B
-    A4[Lieferschein] --> B
+    A1[Bestellung/en] --> B
+    A2[Auftragsbestätigung/en] --> B
+    A4[Lieferschein/e] --> B
 
     B[Vision LLM<br/>Extraktion je Dokument] --> C{Schema gültig?<br/>Pydantic}
-    C -->|nein| W1[Warnung<br/>EXTRACTION_INVALID]
-    C -->|ja| D{Dokumente über<br/>Bestellnummer verknüpft?}
-    D -->|nein| W2[Warnung<br/>DOCUMENT_LINK_MISSING]
-    D -->|ja| E{Lieferant und<br/>Währung gleich?}
-    E -->|nein| W3[Warnung<br/>HEADER_MISMATCH]
-    E -->|ja| F[Positionsabgleich<br/>pro Rechnungsposition]
-    W3 --> F
-    F --> G{Bestellte Positionen<br/>ohne Rechnung?}
-    G -->|ja| W5[Warnung<br/>LINE_NOT_INVOICED]
-    G -->|nein| H{Summe Positionen =<br/>Rechnungstotal ±0.01?}
-    W5 --> H
-    H -->|nein| W4[Warnung<br/>TOTAL_MISMATCH]
-    H -->|ja| I{Warnungen<br/>vorhanden?}
-    W4 --> I
-    I -->|nein| OK[Abgleich ok<br/>Rechnung freigeben]
-    I -->|ja| M[Manuelle Prüfung<br/>mit Warnliste]
-    W1 --> M
-    W2 --> M
+    C -->|nein| F1[Fehler<br/>EXTRACTION_INVALID]
+    C -->|ja| D[Bestellnummern<br/>auf Rechnung ermitteln]
+    D --> D2{Mehrere Bestellungen?<br/>Sammelrechnung}
+    D2 -->|ja| D3[Alle referenzierten<br/>Bestellungen laden]
+    D2 -->|nein| D4[Eine Bestellung laden]
+    D3 --> E
+    D4 --> E
+    E{Alle Bestellungen<br/>gefunden?} -->|nein| F2[Fehler<br/>ORDER_NOT_FOUND]
+    E -->|ja| K{Lieferant und<br/>Währung gleich?}
+    K -->|nein| F3[Fehler<br/>HEADER_MISMATCH]
+    K -->|ja| P[Positionsabgleich<br/>pro Rechnungsposition]
+
+    P --> O{Bestellpositionen<br/>nicht oder nur teilweise<br/>verrechnet?}
+    O -->|ja| H1[Hinweis<br/>ORDER_LINE_OPEN<br/>Restmenge bleibt offen]
+    O -->|nein| T
+    H1 --> T
+    T{Summe Positionen =<br/>Rechnungstotal ±0.01?} -->|nein| F4[Fehler<br/>TOTAL_MISMATCH]
+    T -->|ja| Q
+    F4 --> Q
+
+    Q{Fehler<br/>vorhanden?} -->|ja| M[Manuelle Prüfung<br/>mit Fehler- und Hinweisliste]
+    Q -->|nein| OK[Rechnung freigeben]
+    F1 --> M
+    F2 --> M
+    F3 --> M
+
+    OK --> R{Restmengen<br/>offen?}
+    R -->|ja| S1[Bestellung bleibt offen<br/>für weitere Lieferung]
+    R -->|nein| S2[Bestellung abgeschlossen]
 
     subgraph ML [Machine Learning]
         B
     end
     subgraph KB [Wissensbasiert]
         D
+        D2
         E
-        F
-        G
-        H
+        K
+        P
+        O
+        T
     end
 ```
 
@@ -53,46 +84,60 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Rechnungsposition] --> B{Artikelnr. in<br/>Bestellung?}
-    B -->|ja| D[Position zuordnen]
-    B -->|nein| C{GE EAN in<br/>Bestellung?}
-    C -->|ja| D
-    C -->|nein| X[Warnung<br/>LINE_NOT_ORDERED]
+    A[Rechnungsposition] --> B{Bestellnr. auf<br/>Position angegeben?}
+    B -->|ja| C1[In dieser Bestellung suchen]
+    B -->|nein| C2[In allen Bestellungen<br/>der Rechnung suchen]
+    C1 --> Z
+    C2 --> Z
+    Z{Artikelnr. oder<br/>GE EAN gefunden?} -->|nein| X[Fehler<br/>LINE_NOT_ORDERED]
+    Z -->|ja| D[Bestellposition zuordnen]
 
-    D --> E{Lieferschein<br/>vorhanden?}
-    E -->|nein| W0[Warnung<br/>DELIVERY_NOTE_MISSING]
-    E -->|ja| F{Menge Rechnung ≤<br/>Menge geliefert?}
-    F -->|nein| W1[Warnung<br/>QUANTITY_NOT_DELIVERED]
-    F -->|ja| G
-    W0 --> G
-    W1 --> G
+    D --> Q1{Menge Rechnung ≤<br/>offene Bestellmenge?}
+    Q1 -->|nein| F1[Fehler<br/>QUANTITY_OVER_ORDERED]
+    Q1 -->|ja| Q2{Menge Rechnung =<br/>offene Bestellmenge?}
+    Q2 -->|nein, weniger| H1[Hinweis<br/>PARTIAL_QUANTITY]
+    Q2 -->|ja| L
+    F1 --> L
+    H1 --> L
 
-    G{Menge geliefert ≤<br/>Menge bestätigt?} -->|nein| W2[Warnung<br/>QUANTITY_OVER_CONFIRMED]
-    G -->|ja| H
-    W2 --> H
+    L{Lieferschein<br/>vorhanden?} -->|nein| W0[Warnung<br/>DELIVERY_NOTE_MISSING]
+    L -->|ja| L2{Menge Rechnung ≤<br/>Menge geliefert?}
+    L2 -->|nein| F2[Fehler<br/>QUANTITY_NOT_DELIVERED]
+    L2 -->|ja| P1
+    W0 --> P1
+    F2 --> P1
 
-    H{Preis Rechnung =<br/>Preis Auftragsbestätigung?} -->|nein| W3[Warnung<br/>PRICE_MISMATCH]
-    H -->|ja| I
-    W3 --> I
+    P1{Preis Rechnung =<br/>Preis Auftragsbestätigung?} -->|nein| F3[Fehler<br/>PRICE_MISMATCH]
+    P1 -->|ja| P2
+    F3 --> P2
 
-    I{Preis Auftragsbestätigung =<br/>Preis Bestellung?} -->|nein| W4[Hinweis<br/>PRICE_CHANGED_BY_SUPPLIER]
-    I -->|ja| J[Position geprüft]
-    W4 --> J
+    P2{Preis Auftragsbestätigung =<br/>Preis Bestellung?} -->|nein| H2[Hinweis<br/>PRICE_CHANGED_BY_SUPPLIER]
+    P2 -->|ja| J[Position geprüft<br/>Menge vormerken]
+    H2 --> J
 ```
 
 ## Regeln
 
-| Regel | Vergleich | Code bei Abweichung |
-|---|---|---|
-| Verknüpfung | Bestellnummer auf Auftragsbestätigung, Rechnung und Lieferschein | `DOCUMENT_LINK_MISSING` |
-| Kopfdaten | Lieferant und Währung auf allen Dokumenten gleich | `HEADER_MISMATCH` |
-| Zuordnung | Artikelnummer zuerst, GE EAN als Fallback (wie Verzollung) | `LINE_NOT_ORDERED` |
-| Lieferung | Verrechnete Menge ≤ gelieferte Menge | `QUANTITY_NOT_DELIVERED` |
-| Bestätigung | Gelieferte Menge ≤ bestätigte Menge | `QUANTITY_OVER_CONFIRMED` |
-| Preis | Rechnung gegen Auftragsbestätigung (verbindlicher Preis) | `PRICE_MISMATCH` |
-| Preisänderung | Auftragsbestätigung gegen Bestellung (nur Hinweis) | `PRICE_CHANGED_BY_SUPPLIER` |
-| Offene Positionen | Bestellt, aber nicht verrechnet (Teillieferung) | `LINE_NOT_INVOICED` |
-| Total | Summe der Positionen = Rechnungstotal, Toleranz ±0.01 | `TOTAL_MISMATCH` |
+| Regel | Vergleich | Code | Stufe |
+|---|---|---|---|
+| Verknüpfung | Jede Bestellnummer auf der Rechnung existiert | `ORDER_NOT_FOUND` | Fehler |
+| Kopfdaten | Lieferant und Währung auf allen Dokumenten gleich | `HEADER_MISMATCH` | Fehler |
+| Bestellt | Jede Rechnungsposition gehört zu einer Bestellposition (Artikelnr. zuerst, GE EAN als Fallback, bei Sammelrechnung über alle Bestellungen) | `LINE_NOT_ORDERED` | Fehler |
+| Übermenge | Verrechnete Menge ≤ offene Bestellmenge | `QUANTITY_OVER_ORDERED` | Fehler |
+| Teilmenge | Verrechnete Menge < offene Bestellmenge | `PARTIAL_QUANTITY` | Hinweis |
+| Lieferung | Verrechnete Menge ≤ gelieferte Menge | `QUANTITY_NOT_DELIVERED` | Fehler |
+| Lieferschein | Lieferschein fehlt, Lieferprüfung übersprungen | `DELIVERY_NOTE_MISSING` | Warnung |
+| Preis | Rechnung gegen Auftragsbestätigung (verbindlicher Preis) | `PRICE_MISMATCH` | Fehler |
+| Preisänderung | Auftragsbestätigung gegen Bestellung | `PRICE_CHANGED_BY_SUPPLIER` | Hinweis |
+| Offene Positionen | Bestellt, aber (noch) nicht oder nur teilweise verrechnet | `ORDER_LINE_OPEN` | Hinweis |
+| Total | Summe der Positionen = Rechnungstotal, Toleranz ±0.01 | `TOTAL_MISMATCH` | Fehler |
+
+**Offene Bestellmenge** = bestätigte Menge (laut Auftragsbestätigung, sonst
+Bestellmenge) − bereits auf früheren Rechnungen verrechnete Menge.
+Damit funktionieren auch mehrere Teilrechnungen zur selben Bestellung:
+Erst bei der Freigabe bucht eine Rechnung ihre vorgemerkten Mengen auf die
+Bestellpositionen,
+bis die Restmenge 0 ist.
 
 Toleranzen (Preis, Total) sind Parameter und werden in den Stammdaten
 gepflegt, nicht im Code.
@@ -103,4 +148,7 @@ gepflegt, nicht im Code.
   Trainingsdaten vorliegen.
 - Felder des Datenmodells (`models.py`) für Bestellung, Auftragsbestätigung
   und Lieferschein aus den Beispieldokumenten ableiten.
-- Klären, ob Teillieferungen erlaubt sind oder immer eine Warnung auslösen.
+- Prüfen, ob Sammelrechnungen die Bestellnummer pro Position angeben oder
+  nur im Kopf.
+- Klären, ab wann eine offene Restmenge als Warnung gilt (z.B. nach X Tagen
+  ohne Lieferung).
